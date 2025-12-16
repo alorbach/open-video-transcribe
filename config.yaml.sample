@@ -1,0 +1,16 @@
+ffmpeg_path: ""
+model:
+  type: whisper
+  name: large-v3
+  quantization: float16
+  device: cuda
+languages:
+  input: auto
+  output: en
+ui:
+  show_progress: true
+  log_level: INFO
+output:
+  format: txt
+  save_location: same_as_input
+
