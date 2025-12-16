@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog,
     QMessageBox, QComboBox, QHBoxLayout, QGroupBox
 )
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 
 from core.controller import Controller
 from core.logging_config import get_logger
@@ -45,6 +46,9 @@ class MainWindow(QWidget):
         
         self.setWindowTitle("Open Video Transcribe")
         self.setFixedSize(500, 400)
+        
+        # Enable drag and drop
+        self.setAcceptDrops(True)
         
         layout = QVBoxLayout(self)
         
@@ -157,7 +161,34 @@ class MainWindow(QWidget):
         
         if file_path:
             logger.info(f"Selected file: {file_path}")
-            self.controller.transcribe_file(Path(file_path))
+            self._ask_transcription_mode(Path(file_path))
+    
+    def _ask_transcription_mode(self, file_path: Path) -> None:
+        """Ask user if they want full transcription or test mode (5 minutes)."""
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Transcription Mode")
+        msg_box.setText("Choose transcription mode:")
+        msg_box.setInformativeText(
+            "Full File: Transcribe the entire file\n"
+            "Test Mode: Transcribe only first 5 minutes"
+        )
+        
+        full_button = msg_box.addButton("Full File", QMessageBox.ButtonRole.AcceptRole)
+        test_button = msg_box.addButton("Test Mode (5 min)", QMessageBox.ButtonRole.AcceptRole)
+        cancel_button = msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        
+        msg_box.setDefaultButton(full_button)
+        msg_box.exec()
+        
+        clicked_button = msg_box.clickedButton()
+        if clicked_button == cancel_button:
+            return
+        elif clicked_button == test_button:
+            logger.info("Starting transcription in test mode (5 minutes)")
+            self.controller.transcribe_file(file_path, test_mode=True)
+        else:
+            logger.info("Starting full file transcription")
+            self.controller.transcribe_file(file_path, test_mode=False)
     
     @Slot()
     def _load_model(self) -> None:
@@ -227,6 +258,43 @@ class MainWindow(QWidget):
         self.quant_combo.setEnabled(enabled)
         self.device_combo.setEnabled(enabled)
         self.language_combo.setEnabled(enabled)
+    
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        """Handle drag enter event."""
+        if event.mimeData().hasUrls():
+            # Check if at least one file is a video or audio file
+            urls = event.mimeData().urls()
+            for url in urls:
+                file_path = Path(url.toLocalFile())
+                if file_path.is_file():
+                    suffix = file_path.suffix.lower()
+                    video_formats = [".mp4", ".avi", ".mkv", ".webm", ".mov", ".flv", ".wmv", ".m4v"]
+                    audio_formats = [".mp3", ".wav", ".aac", ".flac", ".m4a", ".ogg"]
+                    if suffix in video_formats or suffix in audio_formats:
+                        event.acceptProposedAction()
+                        return
+        event.ignore()
+    
+    def dropEvent(self, event: QDropEvent) -> None:
+        """Handle drop event."""
+        urls = event.mimeData().urls()
+        if not urls:
+            return
+        
+        # Get the first valid file
+        for url in urls:
+            file_path = Path(url.toLocalFile())
+            if file_path.is_file():
+                suffix = file_path.suffix.lower()
+                video_formats = [".mp4", ".avi", ".mkv", ".webm", ".mov", ".flv", ".wmv", ".m4v"]
+                audio_formats = [".mp3", ".wav", ".aac", ".flac", ".m4a", ".ogg"]
+                if suffix in video_formats or suffix in audio_formats:
+                    logger.info(f"Dropped file: {file_path}")
+                    self._ask_transcription_mode(file_path)
+                    event.acceptProposedAction()
+                    return
+        
+        event.ignore()
     
     def closeEvent(self, event) -> None:
         """Handle window close."""

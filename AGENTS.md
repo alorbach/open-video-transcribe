@@ -9,7 +9,10 @@ Open Video Transcribe is a Python-based video transcription service with GUI tha
 - FFmpeg video-to-audio conversion
 - GPU acceleration (CUDA)
 - Automatic venv setup
-- Multiple output formats (TXT, SRT, VTT)
+- Multiple output formats (TXT with optional timestamps, SRT, VTT)
+- Real-time progress tracking for conversion and transcription
+- Drag-and-drop file support
+- Test mode (5-minute limit for quick testing)
 - Comprehensive logging
 
 ## Architecture Principles
@@ -149,11 +152,26 @@ model_registry.register_adapter("newmodel", NewModelAdapter)
 2. Implement format conversion in `core/controller.py` `_save_transcription()` method
 3. Update `gui/settings_dialog.py` format dropdown
 
+### TXT Output Format
+
+TXT format supports optional timestamps:
+- **With timestamps**: Each line starts with `MM:SS` format (e.g., `00:30 Text here`)
+- **Without timestamps**: Plain text only
+- Timestamp inclusion is controlled by `output.include_timestamps` config setting
+- Timestamps are derived from Whisper segment start times
+- Duplicate consecutive segments are automatically filtered
+
 ### Modifying GUI
 
 - **Main Window**: `gui/main_window.py`
+  - Supports drag-and-drop via `dragEnterEvent()` and `dropEvent()`
+  - Shows transcription mode dialog (Full File vs Test Mode)
+  - Connects to controller signals for status/progress updates
 - **Progress Dialog**: `gui/progress_dialog.py`
+  - Displays real-time progress during conversion and transcription
 - **Settings Dialog**: `gui/settings_dialog.py`
+  - Contains timestamp toggle checkbox for TXT output
+  - Manages all output and language settings
 - Always use Qt signals for thread-safe communication
 - Connect controller signals to GUI slots
 
@@ -204,9 +222,9 @@ open-video-transcribe/
 │       └── progress.py     # Progress tracking utilities
 │
 ├── gui/
-│   ├── main_window.py      # Main GUI window
+│   ├── main_window.py      # Main GUI window (drag-and-drop support)
 │   ├── progress_dialog.py  # Progress indicator
-│   └── settings_dialog.py  # Settings/configuration UI
+│   └── settings_dialog.py  # Settings/configuration UI (timestamp toggle)
 │
 └── config/
     └── manager.py          # Configuration management (YAML)
@@ -244,6 +262,7 @@ ui:
 output:
   format: "txt"              # Output format (txt/srt/vtt)
   save_location: "same_as_input"  # Where to save output
+  include_timestamps: true   # Include timestamps in TXT output (MM:SS format)
 ```
 
 ## Important Notes
@@ -256,6 +275,10 @@ output:
 6. **Configuration**: Use `config_manager` for all settings, never hardcode
 7. **Logging**: Log important operations, especially errors and state changes
 8. **ASCII only**: User preference for ASCII-only output (no special characters in logs/UI)
+9. **Timestamps**: TXT output timestamps use MM:SS format (00:30, not 0:30)
+10. **Duplicate filtering**: Automatically filters consecutive duplicate segments and very short segments
+11. **Progress updates**: Always provide progress callbacks for long-running operations
+12. **Test mode**: Supports duration limits for testing (5 minutes default)
 
 ## Common Patterns
 
@@ -435,4 +458,60 @@ user to choose which version to use. Auto-selects Python 3.12 or
 - **Body**: Wrap at 72 characters per line
 - **Bullets**: Use for key changes if multiple items
 - **Be concise**: Focus on what and why, not how (code shows how)
+
+## Recent Changes Summary
+
+### Session: Enhanced Transcription Features (2025-01)
+
+#### What Changed
+- Added timestamps to TXT output (MM:SS format, e.g., 00:30)
+- Implemented drag-and-drop file support in main window
+- Added test mode option (transcribe first 5 minutes only)
+- Enhanced progress tracking with real-time updates during transcription
+- Added configurable timestamp option in Settings (enable/disable)
+- Improved duplicate segment filtering to remove repeated text
+- Updated timestamp format from M:SS to MM:SS (00:30 instead of 0:30)
+
+#### Why It Changed
+- **Timestamps**: Users requested timestamps at the beginning of each line to easily navigate transcriptions
+- **Drag-and-Drop**: Improves user experience by allowing quick file selection
+- **Test Mode**: Enables quick testing of settings without processing entire files
+- **Progress Updates**: Better user feedback during long transcription operations
+- **Timestamp Toggle**: Some users prefer plain text without timestamps
+- **Duplicate Filtering**: Whisper sometimes generates duplicate segments that need filtering
+
+#### Technical Details
+
+**Files Modified:**
+- `core/controller.py`: Added timestamp formatting, test mode support, duplicate filtering
+- `gui/main_window.py`: Added drag-and-drop handlers, transcription mode dialog
+- `gui/settings_dialog.py`: Added timestamp enable/disable checkbox
+- `core/audio/converter.py`: Added duration_limit parameter for test mode
+- `core/models/whisper_adapter.py`: Enhanced progress callback with segment-based tracking
+- `core/transcription/service.py`: Added progress callback support
+
+**New Configuration Options:**
+- `output.include_timestamps` (boolean, default: true) - Enable/disable timestamps in TXT output
+
+**New Features:**
+1. **Timestamp Formatting**: `_format_timestamp()` formats seconds as MM:SS (e.g., 00:30, 01:23)
+2. **Text Formatting**: `_format_text_with_timestamps()` adds timestamps to each segment line
+3. **Duplicate Filtering**: Skips consecutive segments with identical text and very short segments (< 3 chars)
+4. **Test Mode**: `transcribe_file()` accepts `test_mode` parameter (limits to 5 minutes)
+5. **Drag-and-Drop**: `dragEnterEvent()` and `dropEvent()` handle file drops
+6. **Progress Updates**: Whisper adapter tracks segment progress and emits updates
+
+**Validation Performed:**
+- Tested timestamp formatting with various durations
+- Verified drag-and-drop with multiple file formats
+- Tested test mode with video and audio files
+- Confirmed progress updates during transcription
+- Validated timestamp toggle in Settings
+- Tested duplicate filtering with real transcription results
+
+**Risks/Notes:**
+- Timestamp format change (M:SS → MM:SS) may affect existing workflows expecting old format
+- Test mode creates temporary audio files that should be cleaned up (future enhancement)
+- Duplicate filtering may remove legitimate repeated phrases (edge case)
+- Progress updates depend on segment iteration, may not be perfectly accurate for all audio lengths
 

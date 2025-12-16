@@ -91,7 +91,52 @@ class WhisperAdapter(TranscriptionAdapter):
                 beam_size=5
             )
             
-            segments_list = list(segments)
+            # Get duration from info if available
+            total_duration = None
+            if info and hasattr(info, 'duration'):
+                total_duration = info.duration
+            elif info and hasattr(info, 'language'):
+                # Try to get duration from audio file metadata if available
+                # This is a fallback - we'll estimate from segments
+                pass
+            
+            segments_list = []
+            segment_count = 0
+            last_progress_update = 0.0
+            max_seen_time = 0.0
+            
+            # Iterate through segments and track progress
+            for segment in segments:
+                segments_list.append(segment)
+                segment_count += 1
+                
+                # Track maximum time seen
+                if segment.end:
+                    max_seen_time = max(max_seen_time, segment.end)
+                
+                # Update progress if callback provided (update every few segments or when time advances significantly)
+                if progress_callback and (segment_count % 5 == 0 or (segment.end and segment.end - last_progress_update > 5.0)):
+                    if total_duration and segment.end:
+                        # Progress based on time
+                        progress = min(segment.end / total_duration, 0.99)  # Cap at 99% until complete
+                        progress_callback(progress, f"Transcribing... {int(progress * 100)}%")
+                        last_progress_update = segment.end
+                    elif max_seen_time > 0:
+                        # Estimate progress based on maximum time seen
+                        # Assume we're processing roughly in order
+                        estimated_total = max_seen_time * 1.1  # Add 10% buffer
+                        progress = min(max_seen_time / estimated_total, 0.95)
+                        progress_callback(progress, f"Transcribing... {int(progress * 100)}%")
+                    else:
+                        # Fallback: estimate progress based on segment count
+                        # Very rough estimate - assume ~2-3 segments per second
+                        estimated_progress = min(0.3 + (segment_count * 0.005), 0.90)
+                        progress_callback(estimated_progress, f"Processing segments... {segment_count}")
+            
+            # Final progress update when complete
+            if progress_callback:
+                progress_callback(1.0, "Transcription complete")
+            
             logger.info(f"Transcription completed, got {len(segments_list)} segments")
             
             segment_dicts = []

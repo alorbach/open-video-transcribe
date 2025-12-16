@@ -105,14 +105,21 @@ The first time you load a model, it will be downloaded from HuggingFace (this ma
 ![Main Window](screenshots/main-window.png)
 
 2. **Select a File**
-   - Click **Select Video/Audio File**
+   - **Option 1**: Click **Select Video/Audio File** and choose a file from the dialog
+   - **Option 2**: Drag and drop a video or audio file directly onto the application window
    - Choose a video file (MP4, AVI, MKV, etc.) or audio file (MP3, WAV, etc.)
+   - You will be asked to choose between:
+     - **Full File**: Transcribe the entire file
+     - **Test Mode (5 min)**: Transcribe only the first 5 minutes (useful for testing settings)
 
 3. **Wait for Processing**
+   - A progress dialog will appear showing the transcription progress
    - The application will:
-     - Convert video to audio (if video file)
-     - Transcribe the audio
+     - Convert video to audio (if video file) - progress shown in dialog
+     - Transcribe the audio - progress updated in real-time
      - Save the transcription
+
+![Transcription in Progress](screenshots/main-window-working.png)
 
 4. **View Results**
    - A message will appear showing where the transcription was saved
@@ -122,6 +129,26 @@ The first time you load a model, it will be downloaded from HuggingFace (this ma
    - Open the file to view your transcription
 
 ### Advanced Features
+
+#### Drag and Drop Support
+
+You can drag and drop video or audio files directly onto the application window:
+1. Open the application
+2. Drag a video or audio file from your file manager
+3. Drop it anywhere on the application window
+4. The transcription will start automatically after you select the mode (Full File or Test Mode)
+
+#### Test Mode
+
+Test Mode allows you to transcribe only the first 5 minutes of a file, which is useful for:
+- Testing different model settings
+- Verifying language detection
+- Quick quality checks before processing the entire file
+
+To use Test Mode:
+1. Select a file (via button or drag-and-drop)
+2. Choose **Test Mode (5 min)** when prompted
+3. The application will process only the first 5 minutes
 
 #### Language Selection
 
@@ -133,10 +160,12 @@ The first time you load a model, it will be downloaded from HuggingFace (this ma
 
 1. Click **Settings**
 2. Choose output format:
-   - **TXT**: Plain text file
+   - **TXT**: Plain text file with timestamps at the beginning of each line (format: `M:SS Text`)
    - **SRT**: Subtitle file (for video players)
    - **VTT**: WebVTT format (for web players)
 3. Click **Save**
+
+**Note**: TXT format includes timestamps at the beginning of each line, showing when each segment was spoken (e.g., `0:35 This is the transcribed text`). This makes it easy to find specific parts of the transcription.
 
 #### Changing Models
 
@@ -282,4 +311,5 @@ Screenshots are located in the `doc/screenshots/` folder:
 
 - `setup-script.png` - Setup script running (Python version selection)
 - `main-window.png` - Main application window with all controls
+- `main-window-working.png` - Application during active transcription showing progress dialog with real-time updates
 

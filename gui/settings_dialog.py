@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QFileDialog, QComboBox, QGroupBox, QMessageBox
+    QPushButton, QFileDialog, QComboBox, QGroupBox, QMessageBox, QCheckBox
 )
 
 from config.manager import config_manager
@@ -52,6 +52,10 @@ class SettingsDialog(QDialog):
         format_row.addWidget(self.format_combo)
         output_layout.addLayout(format_row)
         
+        # Timestamp option (only for TXT format)
+        self.include_timestamps_checkbox = QCheckBox("Include timestamps in TXT output (e.g., 00:30)")
+        output_layout.addWidget(self.include_timestamps_checkbox)
+        
         output_group.setLayout(output_layout)
         layout.addWidget(output_group)
         
@@ -93,6 +97,9 @@ class SettingsDialog(QDialog):
         if index >= 0:
             self.format_combo.setCurrentIndex(index)
         
+        include_timestamps = config_manager.get_value("output.include_timestamps", True)
+        self.include_timestamps_checkbox.setChecked(include_timestamps)
+        
         input_lang = config_manager.get_value("languages.input", "auto")
         index = self.input_lang_combo.findText(input_lang)
         if index >= 0:
@@ -120,6 +127,7 @@ class SettingsDialog(QDialog):
                 config_manager.set_value("ffmpeg_path", ffmpeg_path)
             
             config_manager.set_value("output.format", self.format_combo.currentText())
+            config_manager.set_value("output.include_timestamps", self.include_timestamps_checkbox.isChecked())
             config_manager.set_value("languages.input", self.input_lang_combo.currentText())
             
             QMessageBox.information(self, "Success", "Settings saved successfully")

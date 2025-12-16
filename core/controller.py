@@ -8,7 +8,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from config.manager import config_manager
 from core.models.registry import model_registry
-from core.models.base import TranscriptionAdapter
+from core.models.base import TranscriptionAdapter, TranscriptionResult
 from core.audio.converter import FFmpegConverter
 from core.transcription.service import TranscriptionService
 from core.transcription.progress import ProgressInfo
@@ -126,8 +126,13 @@ class Controller(QObject):
             self.widgets_enabled.emit(True)
             self.error_occurred.emit("Model Error", f"Failed to load model: {e}")
     
-    def transcribe_file(self, file_path: Path) -> None:
-        """Transcribe a video or audio file."""
+    def transcribe_file(self, file_path: Path, test_mode: bool = False) -> None:
+        """Transcribe a video or audio file.
+        
+        Args:
+            file_path: Path to video or audio file
+            test_mode: If True, only transcribe first 5 minutes (300 seconds)
+        """
         if not self.adapter:
             self.error_occurred.emit("Error", "No model loaded")
             return
@@ -144,7 +149,7 @@ class Controller(QObject):
         self.current_input_file = file_path
         
         try:
-            audio_path = self._prepare_audio(file_path)
+            audio_path = self._prepare_audio(file_path, test_mode=test_mode)
             self._start_transcription(audio_path)
         except Exception as e:
             logger.exception("Transcription failed")
@@ -153,25 +158,54 @@ class Controller(QObject):
             self.error_occurred.emit("Error", str(e))
             self.current_input_file = None
     
-    def _prepare_audio(self, file_path: Path) -> Path:
-        """Prepare audio file from video or return existing audio."""
+    def _prepare_audio(self, file_path: Path, test_mode: bool = False) -> Path:
+        """Prepare audio file from video or return existing audio.
+        
+        Args:
+            file_path: Path to video or audio file
+            test_mode: If True, limit to first 5 minutes (300 seconds)
+        """
         if not self.converter:
             raise FFmpegError("FFmpeg not configured")
         
+        duration_limit = 300.0 if test_mode else None  # 5 minutes for test mode
+        
         if self.converter.is_audio_file(file_path):
-            logger.info(f"File is already audio: {file_path}")
-            return file_path
+            if test_mode:
+                # For audio files in test mode, we need to create a trimmed version
+                logger.info(f"Creating test version (5 min) of audio file: {file_path}")
+                self.status_updated.emit("Preparing test audio (5 minutes)...")
+                
+                # Create a temporary output path
+                audio_path = file_path.parent / f"{file_path.stem}_test{file_path.suffix}"
+                
+                def progress_callback(progress: float):
+                    self.progress_updated.emit(progress * 0.3, f"Preparing test audio... {int(progress * 100)}%")
+                
+                # Use FFmpeg to extract first 5 minutes
+                audio_path = self.converter.convert_video_to_audio(
+                    file_path,
+                    output_path=audio_path,
+                    progress_callback=progress_callback,
+                    duration_limit=duration_limit
+                )
+                return audio_path
+            else:
+                logger.info(f"File is already audio: {file_path}")
+                return file_path
         
         if self.converter.is_video_file(file_path):
-            logger.info(f"Converting video to audio: {file_path}")
-            self.status_updated.emit("Converting video to audio...")
+            mode_text = "test (5 min)" if test_mode else "full"
+            logger.info(f"Converting video to audio ({mode_text}): {file_path}")
+            self.status_updated.emit(f"Converting video to audio ({mode_text})...")
             
             def progress_callback(progress: float):
                 self.progress_updated.emit(progress * 0.3, f"Converting... {int(progress * 100)}%")
             
             audio_path = self.converter.convert_video_to_audio(
                 file_path,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                duration_limit=duration_limit
             )
             return audio_path
         
@@ -187,21 +221,21 @@ class Controller(QObject):
         )
     
     @Slot(object)
-    def _on_transcription_completed(self, result) -> None:
+    def _on_transcription_completed(self, result: TranscriptionResult) -> None:
         """Handle transcription completion."""
         logger.info(f"Transcription completed: {len(result.text)} characters")
         
         output_format = config_manager.get_value("output.format", "txt")
         save_location = config_manager.get_value("output.save_location", "same_as_input")
         
-        output_path = self._save_transcription(result.text, output_format, save_location)
+        output_path = self._save_transcription(result, output_format, save_location)
         
         self.transcription_completed.emit(result.text, output_path)
         self.status_updated.emit("Done")
         self.widgets_enabled.emit(True)
         self.current_input_file = None  # Clear after saving
     
-    def _save_transcription(self, text: str, format: str, save_location: str) -> Path:
+    def _save_transcription(self, result: TranscriptionResult, format: str, save_location: str) -> Path:
         """Save transcription to file."""
         if save_location == "same_as_input":
             # Use the same directory as the input file
@@ -223,16 +257,60 @@ class Controller(QObject):
                 output_path = base_path / f"transcription.{format}"
         
         if format == "txt":
-            output_path.write_text(text, encoding="utf-8")
+            # Check if timestamps should be included
+            include_timestamps = config_manager.get_value("output.include_timestamps", True)
+            if include_timestamps:
+                formatted_text = self._format_text_with_timestamps(result)
+            else:
+                formatted_text = result.text
+            output_path.write_text(formatted_text, encoding="utf-8")
         elif format == "srt":
-            output_path.write_text(self._text_to_srt(text), encoding="utf-8")
+            output_path.write_text(self._text_to_srt(result.text), encoding="utf-8")
         elif format == "vtt":
-            output_path.write_text(self._text_to_vtt(text), encoding="utf-8")
+            output_path.write_text(self._text_to_vtt(result.text), encoding="utf-8")
         else:
-            output_path.write_text(text, encoding="utf-8")
+            output_path.write_text(result.text, encoding="utf-8")
         
         logger.info(f"Transcription saved to: {output_path}")
         return output_path
+    
+    def _format_timestamp(self, seconds: float) -> str:
+        """Format seconds as timestamp string (e.g., 00:00, 00:35, 01:23)."""
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{minutes:02d}:{secs:02d}"
+    
+    def _format_text_with_timestamps(self, result: TranscriptionResult) -> str:
+        """Format transcription text with timestamps at the beginning of each line."""
+        if not result.segments:
+            # Fallback to plain text if no segments available
+            return result.text
+        
+        lines = []
+        last_text = None
+        last_timestamp = None
+        
+        for segment in result.segments:
+            start_time = segment.get("start", 0.0)
+            text = segment.get("text", "").strip()
+            
+            if not text:
+                continue
+            
+            # Skip duplicate consecutive segments with identical text
+            if text == last_text:
+                continue
+            
+            # Skip very short segments that are likely artifacts
+            if len(text) < 3:
+                continue
+            
+            timestamp = self._format_timestamp(start_time)
+            lines.append(f"{timestamp} {text}")
+            last_text = text
+            last_timestamp = timestamp
+        
+        return "\n".join(lines)
     
     def _text_to_srt(self, text: str) -> str:
         """Convert plain text to SRT format (simplified)."""

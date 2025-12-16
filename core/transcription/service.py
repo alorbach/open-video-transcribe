@@ -38,10 +38,15 @@ class _TranscriptionThread(QThread):
             
             logger.info(f"Starting transcription: {self.audio_file} (language: {self.language or 'auto-detect'})")
             
+            # Create progress callback that emits signals
+            def progress_callback(progress: float, message: str = ""):
+                if not self.isInterruptionRequested():
+                    self.progress_updated.emit(progress, message or f"Transcribing... {int(progress * 100)}%")
+            
             result = self.adapter.transcribe(
                 str(self.audio_file),
                 language=self.language,
-                progress_callback=None
+                progress_callback=progress_callback
             )
             
             if self.isInterruptionRequested():

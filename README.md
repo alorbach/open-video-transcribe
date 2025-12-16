@@ -8,8 +8,11 @@ Open-source video transcription tool that emphasizes the primary use case: trans
 - **FFmpeg Integration**: Automatic video-to-audio conversion using user-provided FFmpeg
 - **Multiple Model Support**: Plugin-based system supporting Whisper and HuggingFace ASR models
 - **GPU Acceleration**: Automatic CUDA detection and support
-- **Multiple Output Formats**: Save transcriptions as TXT, SRT, or VTT
+- **Multiple Output Formats**: Save transcriptions as TXT (with timestamps), SRT, or VTT
 - **Progress Tracking**: Real-time progress indicators for conversion and transcription
+- **Drag and Drop**: Drag video/audio files directly onto the application window
+- **Test Mode**: Transcribe only first 5 minutes for quick testing
+- **Timestamps**: TXT output includes timestamps at the beginning of each line
 - **Auto-Setup**: Automatic virtual environment creation and dependency installation
 
 ## Requirements
@@ -105,13 +108,20 @@ python main.py
 
 ### Workflow
 
-1. Click "Select Video/Audio File" to choose a file
-2. The tool automatically:
-   - Converts video to audio (if video file)
-   - Transcribes the audio
+1. **Select a File**:
+   - Click "Select Video/Audio File" to choose a file, OR
+   - Drag and drop a video/audio file directly onto the window
+2. **Choose Mode**:
+   - **Full File**: Transcribe the entire file
+   - **Test Mode (5 min)**: Transcribe only first 5 minutes (for testing)
+3. The tool automatically:
+   - Converts video to audio (if video file) - progress shown in real-time
+   - Transcribes the audio - progress updated during processing
    - Saves the transcription in the selected format
 
 **Output Location**: The transcription file is saved in the same directory as your input file, with the same basename. For example, `my_video.mp4` → `my_video.txt`.
+
+**Output Format**: TXT files include timestamps at the beginning of each line (e.g., `0:35 Transcribed text`), making it easy to navigate the transcription.
 
 📖 **For complete usage instructions with screenshots, see [User Guide](doc/USER_GUIDE.md)**
 

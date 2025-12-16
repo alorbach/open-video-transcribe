@@ -8,6 +8,7 @@ The following screenshots are currently used in the documentation:
 
 1. **setup-script.png** - Screenshot of the setup script running (showing Python version selection)
 2. **main-window.png** - Main application window with all controls visible
+3. **main-window-working.png** - Main application window during active transcription, showing the progress dialog with real-time progress updates
 
 ## Screenshot Guidelines
 
@@ -37,6 +38,7 @@ The following screenshots are currently used in the documentation:
 
 - `setup-script.png` - Shows the setup.bat script running with Python version selection
 - `main-window.png` - Shows the main application window with model selection, file selection, and settings
+- `main-window-working.png` - Shows the application during active transcription with progress dialog displaying real-time progress updates (conversion and transcription phases)
 
 These screenshots are referenced in `USER_GUIDE.md` and `INSTALLATION.md`.
 
