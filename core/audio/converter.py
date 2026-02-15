@@ -92,17 +92,32 @@ class FFmpegConverter:
             output_path = video_path.with_suffix(f".{audio_format}")
         else:
             output_path = Path(output_path)
-            if not output_path.suffix:
+            if output_path.suffix:
+                # Infer audio format from output path (e.g. .mp3 -> mp3)
+                ext = output_path.suffix.lower().lstrip(".")
+                if ext in ("wav", "mp3", "m4a", "flac", "ogg"):
+                    audio_format = ext
+            elif not output_path.suffix:
                 output_path = output_path.with_suffix(f".{audio_format}")
         
         logger.info(f"Converting video {video_path} to audio {output_path}")
         
+        # Map format to FFmpeg codec (Whisper prefers 16kHz mono)
+        codec_map = {
+            "wav": "pcm_s16le",
+            "mp3": "libmp3lame",
+            "m4a": "aac",
+            "flac": "flac",
+            "ogg": "libvorbis",
+        }
+        codec = codec_map.get(audio_format, "pcm_s16le")
+
         try:
             cmd = [
                 str(self.ffmpeg_path),
                 "-i", str(video_path),
                 "-vn",
-                "-acodec", "pcm_s16le" if audio_format == "wav" else "libmp3lame",
+                "-acodec", codec,
                 "-ar", "16000",
                 "-ac", "1",
             ]
@@ -124,10 +139,12 @@ class FFmpegConverter:
             
             duration = None
             current_time = None
+            stderr_lines: list[str] = []
             
             for line in iter(process.stderr.readline, ''):
                 if not line:
                     break
+                stderr_lines.append(line)
                 
                 if "Duration:" in line:
                     try:
@@ -166,7 +183,7 @@ class FFmpegConverter:
             process.wait()
             
             if process.returncode != 0:
-                _, error_output = process.communicate()
+                error_output = "".join(stderr_lines).strip() or f"Exit code {process.returncode}"
                 raise FFmpegError(f"FFmpeg conversion failed: {error_output}")
             
             if not output_path.exists():

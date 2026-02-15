@@ -96,89 +96,29 @@ def install_torch(gpu_available):
 
 def download_ffmpeg():
     """Download and extract FFmpeg if ffmpeg folder doesn't exist."""
-    ffmpeg_dir = Path("ffmpeg")
-    if ffmpeg_dir.exists():
-        print("FFmpeg folder already exists")
-        return True
-    
-    system = platform.system()
-    
-    if system == "Windows":
-        print("Downloading FFmpeg for Windows...")
-        # FFmpeg Windows build URL (static build, latest release)
-        ffmpeg_url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-        ffmpeg_exe_path = ffmpeg_dir / "bin" / "ffmpeg.exe"
-    elif system == "Linux":
+    if platform.system() == "Linux":
         print("FFmpeg download for Linux not implemented.")
         print("Please install FFmpeg using your package manager:")
         print("  Ubuntu/Debian: sudo apt install ffmpeg")
         print("  Fedora: sudo dnf install ffmpeg")
         print("  Arch: sudo pacman -S ffmpeg")
         return False
-    elif system == "Darwin":  # macOS
+    if platform.system() == "Darwin":
         print("FFmpeg download for macOS not implemented.")
         print("Please install FFmpeg using Homebrew:")
         print("  brew install ffmpeg")
         return False
-    else:
-        print(f"FFmpeg download not implemented for {system}")
+    if platform.system() != "Windows":
+        print(f"FFmpeg download not implemented for {platform.system()}")
         return False
-    
-    if system == "Windows":
-        try:
-            # Create temp directory for download
-            with tempfile.TemporaryDirectory() as temp_dir:
-                zip_path = Path(temp_dir) / "ffmpeg.zip"
-                
-                print("Downloading FFmpeg (this may take a few minutes)...")
-                urllib.request.urlretrieve(ffmpeg_url, zip_path)
-                
-                print("Extracting FFmpeg...")
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    # Extract to temp directory first
-                    extract_temp = Path(temp_dir) / "extract"
-                    zip_ref.extractall(extract_temp)
-                    
-                    # Find the ffmpeg folder in the extracted contents
-                    extracted_dirs = list(extract_temp.iterdir())
-                    if not extracted_dirs:
-                        print("Error: FFmpeg archive structure unexpected")
-                        return False
-                    
-                    # Usually the structure is: ffmpeg-*-essentials/ffmpeg-*-essentials/...
-                    source_dir = extracted_dirs[0]
-                    # Look for bin/ffmpeg.exe
-                    for item in source_dir.rglob("ffmpeg.exe"):
-                        # Found ffmpeg.exe, get its parent directory structure
-                        bin_dir = item.parent
-                        # Get the root of the ffmpeg installation
-                        ffmpeg_root = bin_dir.parent
-                        # Copy the entire ffmpeg structure
-                        shutil.copytree(ffmpeg_root, ffmpeg_dir)
-                        break
-                    else:
-                        print("Error: Could not find ffmpeg.exe in archive")
-                        return False
-                
-                # Verify installation
-                if ffmpeg_exe_path.exists():
-                    print(f"FFmpeg installed successfully to {ffmpeg_dir}")
-                    return True
-                else:
-                    print(f"Error: FFmpeg executable not found at {ffmpeg_exe_path}")
-                    return False
-                    
-        except urllib.error.URLError as e:
-            print(f"Error downloading FFmpeg: {e}")
-            print("Please download FFmpeg manually from https://ffmpeg.org/download.html")
-            return False
-        except zipfile.BadZipFile:
-            print("Error: Downloaded file is not a valid ZIP archive")
-            return False
-        except Exception as e:
-            print(f"Error installing FFmpeg: {e}")
-            return False
-    
+
+    print("Downloading FFmpeg for Windows...")
+    from core.ffmpeg_install import download_ffmpeg as _download
+    success, msg = _download()
+    if success:
+        print(msg)
+        return True
+    print(f"Error: {msg}")
     return False
 
 def create_config_file():
