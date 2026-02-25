@@ -27,9 +27,10 @@ class Controller(QObject):
     error_occurred = Signal(str, str)
     widgets_enabled = Signal(bool)
 
-    def __init__(self):
+    def __init__(self, cuda_available: bool = False):
         super().__init__()
         
+        self.cuda_available = cuda_available
         self.ffmpeg_path: Optional[str] = None
         self.converter: Optional[FFmpegConverter] = None
         self.adapter: Optional[TranscriptionAdapter] = None
@@ -39,6 +40,7 @@ class Controller(QObject):
         self.current_model_type: Optional[str] = None
         self.current_model_name: Optional[str] = None
         self.current_input_file: Optional[Path] = None
+        self._lyrics_mode: bool = False
         
         self._connect_signals()
         self._load_settings()
@@ -67,6 +69,10 @@ class Controller(QObject):
         model_name = config_manager.get_value("model.name", "large-v3")
         quantization = config_manager.get_value("model.quantization", "float16")
         device = config_manager.get_value("model.device", "cuda")
+        # Auto-enable CUDA at startup when GPU is available
+        if self.cuda_available and device == "cpu":
+            device = "cuda"
+            config_manager.set_value("model.device", "cuda")
         
         self.current_language = config_manager.get_value("languages.input", "auto")
         if self.current_language == "auto":
@@ -126,12 +132,18 @@ class Controller(QObject):
             self.widgets_enabled.emit(True)
             self.error_occurred.emit("Model Error", f"Failed to load model: {e}")
     
-    def transcribe_file(self, file_path: Path, test_mode: bool = False) -> None:
+    def transcribe_file(
+        self,
+        file_path: Path,
+        test_mode: bool = False,
+        lyrics_mode: bool = False
+    ) -> None:
         """Transcribe a video or audio file.
         
         Args:
             file_path: Path to video or audio file
             test_mode: If True, only transcribe first 5 minutes (300 seconds)
+            lyrics_mode: If True, use word-level timestamps and output lyrics format
         """
         if not self.adapter:
             self.error_occurred.emit("Error", "No model loaded")
@@ -145,18 +157,20 @@ class Controller(QObject):
         
         self.widgets_enabled.emit(False)
         
-        # Store original input file path for saving output
+        # Store original input file path and mode for saving output
         self.current_input_file = file_path
+        self._lyrics_mode = lyrics_mode
         
         try:
             audio_path = self._prepare_audio(file_path, test_mode=test_mode)
-            self._start_transcription(audio_path)
+            self._start_transcription(audio_path, lyrics_mode=lyrics_mode)
         except Exception as e:
             logger.exception("Transcription failed")
             self.status_updated.emit("Transcription failed")
             self.widgets_enabled.emit(True)
             self.error_occurred.emit("Error", str(e))
             self.current_input_file = None
+            self._lyrics_mode = False
     
     def _prepare_audio(self, file_path: Path, test_mode: bool = False) -> Path:
         """Prepare audio file from video or return existing audio.
@@ -211,13 +225,14 @@ class Controller(QObject):
         
         raise TranscriptionError(f"Unsupported file format: {file_path.suffix}")
     
-    def _start_transcription(self, audio_path: Path) -> None:
+    def _start_transcription(self, audio_path: Path, lyrics_mode: bool = False) -> None:
         """Start transcription of audio file."""
-        logger.info(f"Starting transcription: {audio_path}")
+        logger.info(f"Starting transcription: {audio_path} (lyrics_mode={lyrics_mode})")
         self.transcription_service.transcribe_file(
             self.adapter,
             audio_path,
-            language=self.current_language
+            language=self.current_language,
+            word_timestamps=lyrics_mode
         )
     
     @Slot(object)
@@ -225,7 +240,10 @@ class Controller(QObject):
         """Handle transcription completion."""
         logger.info(f"Transcription completed: {len(result.text)} characters")
         
-        output_format = config_manager.get_value("output.format", "txt")
+        if self._lyrics_mode:
+            output_format = "lyrics"
+        else:
+            output_format = config_manager.get_value("output.format", "txt")
         save_location = config_manager.get_value("output.save_location", "same_as_input")
         
         output_path = self._save_transcription(result, output_format, save_location)
@@ -234,6 +252,7 @@ class Controller(QObject):
         self.status_updated.emit("Done")
         self.widgets_enabled.emit(True)
         self.current_input_file = None  # Clear after saving
+        self._lyrics_mode = False
     
     def _save_transcription(self, result: TranscriptionResult, format: str, save_location: str) -> Path:
         """Save transcription to file."""
@@ -264,6 +283,9 @@ class Controller(QObject):
             else:
                 formatted_text = result.text
             output_path.write_text(formatted_text, encoding="utf-8")
+        elif format == "lyrics":
+            formatted_text = self._format_lyrics(result)
+            output_path.write_text(formatted_text, encoding="utf-8")
         elif format == "srt":
             output_path.write_text(self._text_to_srt(result.text), encoding="utf-8")
         elif format == "vtt":
@@ -279,6 +301,40 @@ class Controller(QObject):
         minutes = int(seconds // 60)
         secs = int(seconds % 60)
         return f"{minutes:02d}:{secs:02d}"
+    
+    def _format_timestamp_lyrics(self, seconds: float) -> str:
+        """Format seconds as lyrics timestamp (e.g., 0:04.400, 1:00.400)."""
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        millis = int((seconds % 1) * 1000)
+        return f"{minutes}:{secs:02d}.{millis:03d}"
+    
+    def _format_lyrics(self, result: TranscriptionResult) -> str:
+        """Format transcription as lyrics with START=END=TEXT per line."""
+        if not result.segments:
+            return ""
+        
+        lines = []
+        for segment in result.segments:
+            words = segment.get("words")
+            if words:
+                for word in words:
+                    start = word.get("start", segment.get("start", 0.0))
+                    end = word.get("end", segment.get("end", 0.0))
+                    text = word.get("word", "").strip()
+                    start_str = self._format_timestamp_lyrics(start)
+                    end_str = self._format_timestamp_lyrics(end)
+                    lines.append(f"{start_str}={end_str}={text}")
+            else:
+                # Fallback: use segment-level timing
+                start = segment.get("start", 0.0)
+                end = segment.get("end", 0.0)
+                text = segment.get("text", "").strip()
+                start_str = self._format_timestamp_lyrics(start)
+                end_str = self._format_timestamp_lyrics(end)
+                lines.append(f"{start_str}={end_str}={text}")
+        
+        return "\n".join(lines)
     
     def _format_text_with_timestamps(self, result: TranscriptionResult) -> str:
         """Format transcription text with timestamps at the beginning of each line."""

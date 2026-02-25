@@ -93,8 +93,9 @@ def _check_dependencies() -> tuple[bool, list[str]]:
 
 
 def _check_cuda_availability() -> tuple[bool, str]:
-    """Check CUDA availability and return status with details."""
+    """Check CUDA availability. Uses PyTorch; falls back to nvidia-smi for GPU detection."""
     try:
+        import subprocess
         import torch
         cuda_available = torch.cuda.is_available()
         
@@ -104,9 +105,23 @@ def _check_cuda_availability() -> tuple[bool, str]:
             device_name = torch.cuda.get_device_name(0) if device_count > 0 else "Unknown"
             logger.info(f"CUDA is available - Version: {cuda_version}, Devices: {device_count}, Device: {device_name}")
             return True, f"CUDA {cuda_version} ({device_name})"
-        else:
-            logger.info("CUDA is not available - using CPU")
-            return False, "CPU only"
+        
+        # PyTorch says no CUDA (e.g. CPU-only build) - check if NVIDIA GPU exists
+        # faster-whisper uses CTranslate2 which can use GPU with nvidia-cublas-cu12
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                gpu_name = result.stdout.strip().split("\n")[0]
+                logger.info(f"NVIDIA GPU detected ({gpu_name}) - CUDA option available (install nvidia-cublas-cu12 if needed)")
+                return True, f"GPU: {gpu_name}"
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        
+        logger.info("CUDA is not available - using CPU")
+        return False, "CPU only"
     except ImportError:
         logger.warning("PyTorch is not installed - CUDA check skipped")
         return False, "PyTorch not installed"

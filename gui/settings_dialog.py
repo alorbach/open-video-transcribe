@@ -27,6 +27,16 @@ class FFmpegDownloadThread(QThread):
         self.finished.emit(success, msg)
 
 
+class CudaInstallThread(QThread):
+    """Thread to install CUDA runtime via pip without blocking the GUI."""
+    finished = Signal(bool, str)
+
+    def run(self) -> None:
+        from core.cuda_install import install_cuda_redist
+        success, msg = install_cuda_redist()
+        self.finished.emit(success, msg)
+
+
 class SettingsDialog(QDialog):
     """Dialog for application settings."""
     
@@ -34,7 +44,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setModal(True)
-        self.setFixedSize(500, 400)
+        self.setFixedSize(500, 480)
         
         layout = QVBoxLayout(self)
         
@@ -59,6 +69,16 @@ class SettingsDialog(QDialog):
         ffmpeg_layout.addLayout(ffmpeg_row)
         ffmpeg_group.setLayout(ffmpeg_layout)
         layout.addWidget(ffmpeg_group)
+        
+        cuda_group = QGroupBox("CUDA (GPU)")
+        cuda_layout = QVBoxLayout()
+        cuda_layout.addWidget(QLabel("If GPU fails with cublas64_12.dll error:"))
+        self.install_cuda_button = QPushButton("Install CUDA Runtime (nvidia-cublas-cu12, nvidia-cudnn-cu12)")
+        self.install_cuda_button.clicked.connect(self._install_cuda)
+        self.install_cuda_button.setVisible(platform.system() == "Windows")
+        cuda_layout.addWidget(self.install_cuda_button)
+        cuda_group.setLayout(cuda_layout)
+        layout.addWidget(cuda_group)
         
         output_group = QGroupBox("Output")
         output_layout = QVBoxLayout()
@@ -167,6 +187,30 @@ class SettingsDialog(QDialog):
                     "Install Failed",
                     f"FFmpeg installation failed:\n{msg}"
                 )
+        thread.finished.connect(on_finished)
+        thread.start()
+
+    @Slot()
+    def _install_cuda(self) -> None:
+        """Install CUDA runtime libraries via pip (Windows only)."""
+        if platform.system() != "Windows":
+            QMessageBox.information(self, "CUDA", "CUDA auto-install is only available on Windows.")
+            return
+        self.install_cuda_button.setEnabled(False)
+        progress = QProgressDialog("Installing CUDA runtime (~400-600MB)...", None, 0, 0, self)
+        progress.setWindowTitle("Install CUDA")
+        progress.setModal(True)
+        progress.show()
+        thread = CudaInstallThread(self)
+
+        def on_finished(success: bool, msg: str) -> None:
+            progress.close()
+            self.install_cuda_button.setEnabled(True)
+            if success:
+                QMessageBox.information(self, "CUDA Installed", msg)
+            else:
+                QMessageBox.warning(self, "Install Failed", msg)
+
         thread.finished.connect(on_finished)
         thread.start()
     

@@ -17,7 +17,7 @@ Open-source video transcription tool that emphasizes the primary use case: trans
 
 ## Requirements
 
-- Python 3.11 or 3.12
+- Python 3.11, 3.12, or 3.13
 - FFmpeg (auto-downloaded on Windows, user-provided on Linux/macOS)
 - NVIDIA GPU (optional, for CUDA acceleration)
 

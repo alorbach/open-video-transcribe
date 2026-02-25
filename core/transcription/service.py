@@ -23,12 +23,14 @@ class _TranscriptionThread(QThread):
         self,
         adapter: TranscriptionAdapter,
         audio_file: Path,
-        language: Optional[str] = None
+        language: Optional[str] = None,
+        word_timestamps: bool = False
     ) -> None:
         super().__init__()
         self.adapter = adapter
         self.audio_file = Path(audio_file)
         self.language = language
+        self.word_timestamps = word_timestamps
 
     def run(self) -> None:
         """Run transcription in thread."""
@@ -46,7 +48,8 @@ class _TranscriptionThread(QThread):
             result = self.adapter.transcribe(
                 str(self.audio_file),
                 language=self.language,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                word_timestamps=self.word_timestamps
             )
             
             if self.isInterruptionRequested():
@@ -80,7 +83,8 @@ class TranscriptionService(QObject):
         self,
         adapter: TranscriptionAdapter,
         audio_file: Path,
-        language: Optional[str] = None
+        language: Optional[str] = None,
+        word_timestamps: bool = False
     ) -> None:
         """Start transcription of an audio file.
         
@@ -88,6 +92,7 @@ class TranscriptionService(QObject):
             adapter: Model adapter to use
             audio_file: Path to audio file
             language: Language code (None for auto-detect)
+            word_timestamps: If True, request word-level timestamps from adapter
         """
         if not adapter:
             error_msg = "No model adapter available for transcription"
@@ -102,7 +107,8 @@ class TranscriptionService(QObject):
             self._transcription_thread = _TranscriptionThread(
                 adapter,
                 audio_file,
-                transcription_language
+                transcription_language,
+                word_timestamps=word_timestamps
             )
             self._transcription_thread.transcription_done.connect(self._on_transcription_done)
             self._transcription_thread.error_occurred.connect(self._on_transcription_error)

@@ -37,7 +37,8 @@ class TranscriptionAdapter(ABC):
         self,
         audio_path: str,
         language: Optional[str] = None,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[callable] = None,
+        word_timestamps: bool = False
     ) -> TranscriptionResult:
         """Transcribe audio file.
         

@@ -40,7 +40,7 @@ class MainWindow(QWidget):
     def __init__(self, cuda_available: bool = False):
         super().__init__()
         
-        self.controller = Controller()
+        self.controller = Controller(cuda_available=cuda_available)
         self.cuda_available = cuda_available
         self.progress_dialog: ProgressDialog = None
         
@@ -164,17 +164,19 @@ class MainWindow(QWidget):
             self._ask_transcription_mode(Path(file_path))
     
     def _ask_transcription_mode(self, file_path: Path) -> None:
-        """Ask user if they want full transcription or test mode (5 minutes)."""
+        """Ask user if they want full transcription, test mode, or lyrics extraction."""
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Transcription Mode")
         msg_box.setText("Choose transcription mode:")
         msg_box.setInformativeText(
             "Full File: Transcribe the entire file\n"
-            "Test Mode: Transcribe only first 5 minutes"
+            "Test Mode: Transcribe only first 5 minutes\n"
+            "Extract Lyrics: Word-level timestamps for MP3/WAV (format: START=END=WORD)"
         )
         
         full_button = msg_box.addButton("Full File", QMessageBox.ButtonRole.AcceptRole)
         test_button = msg_box.addButton("Test Mode (5 min)", QMessageBox.ButtonRole.AcceptRole)
+        lyrics_button = msg_box.addButton("Extract Lyrics", QMessageBox.ButtonRole.AcceptRole)
         cancel_button = msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         
         msg_box.setDefaultButton(full_button)
@@ -186,6 +188,9 @@ class MainWindow(QWidget):
         elif clicked_button == test_button:
             logger.info("Starting transcription in test mode (5 minutes)")
             self.controller.transcribe_file(file_path, test_mode=True)
+        elif clicked_button == lyrics_button:
+            logger.info("Starting lyrics extraction mode")
+            self.controller.transcribe_file(file_path, test_mode=False, lyrics_mode=True)
         else:
             logger.info("Starting full file transcription")
             self.controller.transcribe_file(file_path, test_mode=False)
