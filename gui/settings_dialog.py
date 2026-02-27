@@ -207,7 +207,11 @@ class SettingsDialog(QDialog):
             progress.close()
             self.install_cuda_button.setEnabled(True)
             if success:
-                QMessageBox.information(self, "CUDA Installed", msg)
+                QMessageBox.information(
+                    self,
+                    "CUDA Installed",
+                    f"{msg}\n\nYou must restart the application for GPU support to take effect.",
+                )
             else:
                 QMessageBox.warning(self, "Install Failed", msg)
 

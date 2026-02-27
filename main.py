@@ -93,41 +93,60 @@ def _check_dependencies() -> tuple[bool, list[str]]:
 
 
 def _check_cuda_availability() -> tuple[bool, str]:
-    """Check CUDA availability. Uses PyTorch; falls back to nvidia-smi for GPU detection."""
-    try:
-        import subprocess
-        import torch
-        cuda_available = torch.cuda.is_available()
-        
-        if cuda_available:
-            cuda_version = torch.version.cuda or "Unknown"
-            device_count = torch.cuda.device_count()
-            device_name = torch.cuda.get_device_name(0) if device_count > 0 else "Unknown"
-            logger.info(f"CUDA is available - Version: {cuda_version}, Devices: {device_count}, Device: {device_name}")
-            return True, f"CUDA {cuda_version} ({device_name})"
-        
-        # PyTorch says no CUDA (e.g. CPU-only build) - check if NVIDIA GPU exists
-        # faster-whisper uses CTranslate2 which can use GPU with nvidia-cublas-cu12
+    """Check CUDA availability. Uses CTranslate2 runtime; falls back to nvidia-smi for GPU presence."""
+    import subprocess
+
+    def _nvidia_gpu_name() -> str | None:
+        """Get first NVIDIA GPU name via nvidia-smi, or None."""
         try:
             result = subprocess.run(
                 ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=5,
             )
             if result.returncode == 0 and result.stdout.strip():
-                gpu_name = result.stdout.strip().split("\n")[0]
-                logger.info(f"NVIDIA GPU detected ({gpu_name}) - CUDA option available (install nvidia-cublas-cu12 if needed)")
-                return True, f"GPU: {gpu_name}"
+                return result.stdout.strip().split("\n")[0]
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
-        
-        logger.info("CUDA is not available - using CPU")
-        return False, "CPU only"
-    except ImportError:
-        logger.warning("PyTorch is not installed - CUDA check skipped")
-        return False, "PyTorch not installed"
+        return None
+
+    # CTranslate2 (used by faster-whisper) is the source of truth for GPU support
+    try:
+        import ctranslate2
+        get_count = getattr(ctranslate2, "get_cuda_device_count", None)
+        if get_count is not None:
+            count = get_count()
+            if count > 0:
+                gpu_name = _nvidia_gpu_name() or "NVIDIA GPU"
+                logger.info(f"CTranslate2 CUDA available - Devices: {count}, Device: {gpu_name}")
+                return True, f"CUDA ({gpu_name})"
     except Exception as e:
-        logger.error(f"Error checking CUDA availability: {e}", exc_info=True)
-        return False, f"Error: {str(e)}"
+        logger.debug(f"CTranslate2 CUDA check failed: {e}")
+
+    # Fallback: PyTorch CUDA
+    try:
+        import torch
+        if torch.cuda.is_available():
+            cuda_version = torch.version.cuda or "Unknown"
+            device_count = torch.cuda.device_count()
+            device_name = torch.cuda.get_device_name(0) if device_count > 0 else "Unknown"
+            logger.info(f"CUDA available (PyTorch) - Version: {cuda_version}, Devices: {device_count}, Device: {device_name}")
+            return True, f"CUDA {cuda_version} ({device_name})"
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug(f"PyTorch CUDA check failed: {e}")
+
+    # GPU present but CUDA runtime missing - guide user
+    gpu_name = _nvidia_gpu_name()
+    if gpu_name:
+        logger.info(
+            f"NVIDIA GPU detected ({gpu_name}) but CUDA 12 runtime libraries missing. "
+            "Use Settings > Install CUDA Runtime (nvidia-cublas-cu12, nvidia-cudnn-cu12)."
+        )
+        return False, f"GPU detected - install CUDA runtime (Settings)"
+
+    logger.info("CUDA is not available - using CPU")
+    return False, "CPU only"
 
 
 def run_gui() -> None:
@@ -190,7 +209,10 @@ def main() -> None:
         log_level = logging.DEBUG if "--debug" in sys.argv else logging.INFO
         log_file = setup_logging(level=log_level)
         logger.info(f"Logging initialized - Log file: {log_file}")
-        
+
+        from core.cuda_install import prepend_nvidia_cuda_paths
+        prepend_nvidia_cuda_paths()
+
         _log_system_info()
         
         run_gui()

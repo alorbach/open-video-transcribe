@@ -5,13 +5,72 @@ when using GPU. No admin rights required.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import platform
 import subprocess
 from pathlib import Path
-from typing import Tuple
+from typing import List, Tuple
 
 CUDA_PACKAGES = ["nvidia-cublas-cu12", "nvidia-cudnn-cu12"]
+
+# Package names to lib/bin subdir mapping (Windows uses bin, Linux uses lib)
+_NVIDIA_PKG_MODULES = ["nvidia.cublas", "nvidia.cudnn"]
+_WIN_LIB_SUBDIR = "bin"
+_UNIX_LIB_SUBDIR = "lib"
+
+
+def get_nvidia_cuda_lib_paths() -> List[Path]:
+    """Discover nvidia pip package lib/bin directories for CUDA runtime DLLs.
+
+    Returns paths that contain cublas64_12.dll and cuDNN libraries needed by
+    CTranslate2. Call prepend_nvidia_cuda_paths() to add these to the process.
+    """
+    paths: List[Path] = []
+    lib_subdir = _WIN_LIB_SUBDIR if platform.system() == "Windows" else _UNIX_LIB_SUBDIR
+
+    for mod_name in _NVIDIA_PKG_MODULES:
+        try:
+            spec = importlib.util.find_spec(mod_name)
+            if spec is None:
+                continue
+            # Namespace packages have submodule_search_locations, regular packages have origin
+            if spec.origin:
+                pkg_dir = Path(spec.origin).resolve().parent
+            elif spec.submodule_search_locations:
+                pkg_dir = Path(spec.submodule_search_locations[0]).resolve()
+            else:
+                continue
+            lib_path = pkg_dir / lib_subdir
+            if lib_path.is_dir() and lib_path not in paths:
+                paths.append(lib_path)
+        except (ImportError, ValueError, AttributeError, IndexError):
+            pass
+
+    return paths
+
+
+def prepend_nvidia_cuda_paths() -> None:
+    """Prepend nvidia pip package lib/bin paths to DLL search so CTranslate2 can find cublas64_12.dll.
+
+    Call this at application startup, before importing faster_whisper or ctranslate2.
+    On Windows, also uses os.add_dll_directory() for proper DLL resolution.
+    """
+    paths = get_nvidia_cuda_lib_paths()
+    if not paths:
+        return
+
+    path_strs = [str(p) for p in paths]
+    sep = os.pathsep
+    existing = os.environ.get("PATH", "")
+    os.environ["PATH"] = sep.join(path_strs) + sep + existing
+
+    if platform.system() == "Windows":
+        for p in paths:
+            try:
+                os.add_dll_directory(str(p))
+            except (OSError, FileNotFoundError):
+                pass
 
 
 def _get_venv_python() -> Path | None:

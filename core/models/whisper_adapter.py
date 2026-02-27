@@ -101,7 +101,11 @@ class WhisperAdapter(TranscriptionAdapter):
         except RuntimeError as e:
             err_str = str(e).lower()
             if self.device == "cuda" and ("cublas" in err_str or "cuda" in err_str or "cudnn" in err_str):
-                logger.warning("CUDA failed (%s), falling back to CPU", e)
+                logger.warning(
+                    "CUDA failed (%s), falling back to CPU. "
+                    "For GPU: Settings > Install CUDA Runtime (nvidia-cublas-cu12, nvidia-cudnn-cu12), then restart.",
+                    e,
+                )
                 config_manager.set_value("model.device", "cpu")
                 cpu_quant = "float32" if self.quantization == "float16" else self.quantization
                 self.load_model(
