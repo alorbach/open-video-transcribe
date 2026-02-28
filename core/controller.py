@@ -101,8 +101,8 @@ class Controller(QObject):
         model_name: str,
         quantization: str,
         device: str
-    ) -> None:
-        """Load a transcription model."""
+    ) -> bool:
+        """Load a transcription model. Returns True on success, False on failure."""
         self.widgets_enabled.emit(False)
         self.status_updated.emit(f"Loading model {model_name}...")
         
@@ -125,12 +125,14 @@ class Controller(QObject):
             logger.info(f"Model loaded: {model_name} on {device}")
             self.status_updated.emit(f"Model {model_name} ready")
             self.widgets_enabled.emit(True)
+            return True
             
         except Exception as e:
             logger.exception("Failed to load model")
             self.status_updated.emit("Model load failed")
             self.widgets_enabled.emit(True)
             self.error_occurred.emit("Model Error", f"Failed to load model: {e}")
+            return False
     
     def transcribe_file(
         self,

@@ -7,18 +7,15 @@ import psutil
 from faster_whisper import WhisperModel
 
 from core.models.base import TranscriptionAdapter, TranscriptionResult
+from core.models.model_info import (
+    resolve_repo,
+    get_systran_fallback,
+)
 from core.logging_config import get_logger
 from core.exceptions import ModelLoadError
 from config.manager import config_manager
 
 logger = get_logger(__name__)
-
-
-def _make_repo_string(model_name: str, quantization_type: str) -> str:
-    """Create repository string for model."""
-    if model_name.startswith("distil-whisper"):
-        return f"ctranslate2-4you/{model_name}-ct2-{quantization_type}"
-    return f"ctranslate2-4you/whisper-{model_name}-ct2-{quantization_type}"
 
 
 class WhisperAdapter(TranscriptionAdapter):
@@ -61,25 +58,56 @@ class WhisperAdapter(TranscriptionAdapter):
             elif quantization not in ("float32", "int8", "int8_float32"):
                 compute_type = "float32"
         
-        repo = _make_repo_string(model_name, quantization)
-        logger.info(f"Loading Whisper model {repo} on {device}")
-        
-        try:
-            self.model = WhisperModel(
-                repo,
+        repo_or_id, use_systran_direct = resolve_repo(model_name, quantization)
+
+        def _try_load(model_arg: str) -> WhisperModel:
+            return WhisperModel(
+                model_arg,
                 device=device,
                 compute_type=compute_type,
                 cpu_threads=cpu_threads,
             )
+
+        logger.info(f"Loading Whisper model {repo_or_id} on {device}")
+
+        try:
+            self.model = _try_load(repo_or_id)
             self.model_name = model_name
             self.quantization = quantization
             self.device = device
             self.cpu_threads = cpu_threads
-            logger.info(f"Model {repo} loaded successfully")
+            logger.info(f"Model {repo_or_id} loaded successfully")
             return self.model
         except Exception as e:
-            logger.exception(f"Failed to load model {repo}")
-            raise ModelLoadError(f"Error loading model {repo}: {e}") from e
+            err_str = str(e).lower()
+            is_http_error = (
+                "401" in err_str or "404" in err_str or "unauthorized" in err_str
+                or "not found" in err_str
+            )
+            if is_http_error and not use_systran_direct:
+                fallback_id = get_systran_fallback(model_name)
+                logger.warning(
+                    f"Primary repo failed ({repo_or_id}), trying Systran fallback: {fallback_id}"
+                )
+                try:
+                    self.model = _try_load(fallback_id)
+                    self.model_name = model_name
+                    self.quantization = quantization
+                    self.device = device
+                    self.cpu_threads = cpu_threads
+                    logger.info(f"Model loaded from Systran fallback: {fallback_id}")
+                    return self.model
+                except Exception as e2:
+                    logger.exception(f"Fallback failed for {fallback_id}")
+                    raise ModelLoadError(
+                        f"Model load failed. Primary: {e}. Fallback: {e2}. "
+                        "Check internet and HuggingFace access."
+                    ) from e2
+            logger.exception(f"Failed to load model {repo_or_id}")
+            raise ModelLoadError(
+                f"Error loading model {repo_or_id}: {e}. "
+                "Check internet connection and HuggingFace access."
+            ) from e
     
     def transcribe(
         self,

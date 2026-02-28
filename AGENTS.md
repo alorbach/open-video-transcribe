@@ -461,6 +461,41 @@ user to choose which version to use. Auto-selects Python 3.12 or
 
 ## Recent Changes Summary
 
+### Session: Model Description, Detection, Download and New Models (2026-02)
+
+#### What Changed
+- Added centralized model metadata (id, display name, description, rating 1-10, VRAM, languages)
+- Fixed distil model repo mapping (distil-whisper-X-ct2 format; fallback to Systran on 401/404)
+- Added large-v3-turbo, turbo, distil-large-v3.5 to model list
+- Model combo now shows ratings and sorts by quality (best first)
+- Added model description label with VRAM hint and cached status
+- Implemented Systran fallback when ctranslate2-4you repo fails
+- Model load runs in background thread; Download Model button for pre-download
+- GPU VRAM detection and display in model description
+
+#### Why It Changed
+- Users need clearer model selection (descriptions, ratings)
+- distil-large-v3 returned 401 due to wrong repo mapping
+- Newer models (turbo, distil-large-v3.5) offer better speed/quality options
+- Non-blocking model load and pre-download improve UX
+
+#### Technical Details
+
+**Files Created/Modified:**
+- `core/models/model_info.py`: New - metadata table, resolve_repo, is_model_cached, get_gpu_vram_mb
+- `core/models/whisper_adapter.py`: Use model_info resolver, Systran fallback on HTTP errors
+- `gui/main_window.py`: Model combo from metadata, description label, Load/Download threads
+- `core/controller.py`: load_model returns bool for async usage
+
+**Validation Performed:**
+- Verified model list and ratings display
+- Tested resolve_repo for large-v3, distil-large-v3
+- App launches and loads model
+
+**Risks/Notes:**
+- distil-large-v3 may still 401 on ctranslate2-4you; Systran fallback kicks in
+- Cache check uses huggingface_hub.scan_cache_dir
+
 ### Session: Enhanced Transcription Features (2025-01)
 
 #### What Changed

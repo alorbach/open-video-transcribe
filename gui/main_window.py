@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, Slot, QThread, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog,
     QMessageBox, QComboBox, QHBoxLayout, QGroupBox
@@ -12,17 +13,64 @@ from PySide6.QtGui import QDragEnterEvent, QDropEvent
 
 from core.controller import Controller
 from core.logging_config import get_logger
+from core.models.model_info import (
+    get_models_sorted_by_rating,
+    get_model_info,
+    is_model_cached,
+    get_gpu_vram_mb,
+    resolve_repo,
+)
 from config.manager import config_manager
 from gui.progress_dialog import ProgressDialog
 from gui.settings_dialog import SettingsDialog
 
 logger = get_logger(__name__)
 
-WHISPER_MODELS = [
-    "tiny", "tiny.en", "base", "base.en", "small", "small.en",
-    "medium", "medium.en", "large-v1", "large-v2", "large-v3",
-    "distil-small.en", "distil-medium.en", "distil-large-v2", "distil-large-v3"
-]
+
+class ModelLoadThread(QThread):
+    """Thread to load model without blocking the GUI."""
+    finished = Signal(bool, str)
+
+    def __init__(self, controller, model_type: str, model_name: str, quantization: str, device: str):
+        super().__init__()
+        self.controller = controller
+        self.model_type = model_type
+        self.model_name = model_name
+        self.quantization = quantization
+        self.device = device
+
+    def run(self) -> None:
+        success = self.controller.load_model(
+            self.model_type,
+            self.model_name,
+            self.quantization,
+            self.device,
+        )
+        if success:
+            self.finished.emit(True, f"Model {self.model_name} ready")
+        else:
+            self.finished.emit(False, "Model load failed")
+
+
+class ModelDownloadThread(QThread):
+    """Thread to pre-download model without loading."""
+    finished = Signal(bool, str)
+
+    def __init__(self, model_id: str, quantization: str):
+        super().__init__()
+        self.model_id = model_id
+        self.quantization = quantization
+
+    def run(self) -> None:
+        try:
+            from faster_whisper.utils import download_model
+            repo_or_id, use_systran = resolve_repo(self.model_id, self.quantization)
+            download_model(repo_or_id)
+            self.finished.emit(True, f"Model {self.model_id} downloaded successfully")
+        except Exception as e:
+            logger.exception("Model download failed")
+            self.finished.emit(False, str(e))
+
 
 WHISPER_LANGUAGES = [
     ("auto", "Auto-detect"),
@@ -43,9 +91,11 @@ class MainWindow(QWidget):
         self.controller = Controller(cuda_available=cuda_available)
         self.cuda_available = cuda_available
         self.progress_dialog: ProgressDialog = None
+        self._load_thread: Optional[ModelLoadThread] = None
+        self._download_thread: Optional[ModelDownloadThread] = None
         
         self.setWindowTitle("Open Video Transcribe")
-        self.setFixedSize(500, 400)
+        self.setFixedSize(500, 480)
         
         # Enable drag and drop
         self.setAcceptDrops(True)
@@ -69,14 +119,22 @@ class MainWindow(QWidget):
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel("Model:"))
         self.model_combo = QComboBox()
-        self.model_combo.addItems(WHISPER_MODELS)
+        for info in get_models_sorted_by_rating():
+            self.model_combo.addItem(info.combo_display(), info.id)
+        self.model_combo.currentIndexChanged.connect(self._on_model_selection_changed)
         model_row.addWidget(self.model_combo)
         model_layout.addLayout(model_row)
+        
+        self.model_desc_label = QLabel("")
+        self.model_desc_label.setWordWrap(True)
+        self.model_desc_label.setStyleSheet("color: gray; font-size: 11px;")
+        model_layout.addWidget(self.model_desc_label)
         
         quant_row = QHBoxLayout()
         quant_row.addWidget(QLabel("Quantization:"))
         self.quant_combo = QComboBox()
         self.quant_combo.addItems(["float16", "float32", "int8"])
+        self.quant_combo.currentIndexChanged.connect(self._on_model_selection_changed)
         quant_row.addWidget(self.quant_combo)
         model_layout.addLayout(quant_row)
         
@@ -105,6 +163,11 @@ class MainWindow(QWidget):
         self.load_model_button.clicked.connect(self._load_model)
         button_row.addWidget(self.load_model_button)
         
+        self.download_model_button = QPushButton("Download Model")
+        self.download_model_button.clicked.connect(self._download_model)
+        self.download_model_button.setToolTip("Pre-download model without loading")
+        button_row.addWidget(self.download_model_button)
+        
         self.settings_button = QPushButton("Settings")
         self.settings_button.clicked.connect(self._show_settings)
         button_row.addWidget(self.settings_button)
@@ -113,6 +176,7 @@ class MainWindow(QWidget):
         
         self._connect_signals()
         self._load_config()
+        self._on_model_selection_changed()
         
         logger.info("MainWindow initialized")
     
@@ -124,12 +188,39 @@ class MainWindow(QWidget):
         self.controller.error_occurred.connect(self._show_error)
         self.controller.widgets_enabled.connect(self._set_widgets_enabled)
     
+    def _on_model_selection_changed(self) -> None:
+        """Update description label when model selection changes."""
+        model_id = self.model_combo.currentData()
+        if not model_id:
+            self.model_desc_label.setText("")
+            return
+        info = get_model_info(model_id)
+        if not info:
+            self.model_desc_label.setText("")
+            return
+        desc = info.description_with_rating()
+        gpu_vram = get_gpu_vram_mb()
+        if gpu_vram is not None and info.vram_mb > 0:
+            status = "OK" if gpu_vram >= info.vram_mb else "may be tight"
+            desc += f" Your GPU: {gpu_vram} MB ({status})."
+        quant = self.quant_combo.currentText()
+        repo_or_id, _ = resolve_repo(model_id, quant)
+        if is_model_cached(repo_or_id):
+            desc += " [Cached]"
+        self.model_desc_label.setText(desc)
+        self.model_combo.setToolTip(info.description)
+
     def _load_config(self) -> None:
         """Load configuration."""
         model_name = self.controller.current_model_name or "large-v3"
-        index = self.model_combo.findText(model_name)
-        if index >= 0:
-            self.model_combo.setCurrentIndex(index)
+        found = False
+        for i in range(self.model_combo.count()):
+            if self.model_combo.itemData(i) == model_name:
+                self.model_combo.setCurrentIndex(i)
+                found = True
+                break
+        if not found:
+            self.model_combo.setCurrentIndex(0)
         
         quantization = config_manager.get_value("model.quantization", "float16")
         index = self.quant_combo.findText(quantization)
@@ -197,12 +288,69 @@ class MainWindow(QWidget):
     
     @Slot()
     def _load_model(self) -> None:
-        """Load transcription model."""
-        model_name = self.model_combo.currentText()
+        """Load transcription model (runs in background thread)."""
+        model_id = self.model_combo.currentData()
+        if not model_id:
+            return
         quantization = self.quant_combo.currentText()
         device = self.device_combo.currentText()
         
-        self.controller.load_model("whisper", model_name, quantization, device)
+        self._set_widgets_enabled(False)
+        if self.progress_dialog is None:
+            self.progress_dialog = ProgressDialog(self)
+        self.progress_dialog.setWindowTitle("Loading Model")
+        self.progress_dialog.update_progress(0.0, f"Loading {model_id}...")
+        self.progress_dialog.show()
+        
+        self._load_thread = ModelLoadThread(
+            self.controller, "whisper", model_id, quantization, device
+        )
+
+        def on_finished(success: bool, msg: str) -> None:
+            if self.progress_dialog:
+                self.progress_dialog.close()
+                self.progress_dialog = None
+            self._set_widgets_enabled(True)
+            self._load_thread = None
+            if success:
+                self.status_label.setText(msg)
+            else:
+                QMessageBox.warning(self, "Load Failed", msg)
+
+        self._load_thread.finished.connect(on_finished)
+        self._load_thread.start()
+
+    @Slot()
+    def _download_model(self) -> None:
+        """Pre-download model without loading."""
+        model_id = self.model_combo.currentData()
+        if not model_id:
+            return
+        quantization = self.quant_combo.currentText()
+        
+        self.download_model_button.setEnabled(False)
+        if self.progress_dialog is None:
+            self.progress_dialog = ProgressDialog(self)
+        self.progress_dialog.setWindowTitle("Download Model")
+        self.progress_dialog.update_progress(0.0, f"Downloading {model_id}...")
+        self.progress_dialog.show()
+        
+        self._download_thread = ModelDownloadThread(model_id, quantization)
+
+        def on_finished(success: bool, msg: str) -> None:
+            if self.progress_dialog:
+                self.progress_dialog.close()
+                self.progress_dialog = None
+            self.download_model_button.setEnabled(True)
+            self._download_thread = None
+            if success:
+                QMessageBox.information(self, "Download Complete", msg)
+                self._on_model_selection_changed()
+            else:
+                QMessageBox.warning(self, "Download Failed", msg)
+
+        self._download_thread.finished.connect(on_finished)
+        self._download_thread.start()
     
     @Slot()
     def _show_settings(self) -> None:
@@ -258,6 +406,7 @@ class MainWindow(QWidget):
         """Enable/disable widgets."""
         self.select_file_button.setEnabled(enabled)
         self.load_model_button.setEnabled(enabled)
+        self.download_model_button.setEnabled(enabled)
         self.settings_button.setEnabled(enabled)
         self.model_combo.setEnabled(enabled)
         self.quant_combo.setEnabled(enabled)
@@ -305,6 +454,12 @@ class MainWindow(QWidget):
         """Handle window close."""
         if self.progress_dialog:
             self.progress_dialog.close()
+        if self._load_thread and self._load_thread.isRunning():
+            self._load_thread.requestInterruption()
+            self._load_thread.wait(5000)
+        if self._download_thread and self._download_thread.isRunning():
+            self._download_thread.requestInterruption()
+            self._download_thread.wait(5000)
         self.controller.cleanup()
         logger.info("Application closing")
         super().closeEvent(event)
